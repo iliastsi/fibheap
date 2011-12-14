@@ -1,7 +1,7 @@
 /*
  *  Copyright (c) 2011 Tsitsimpis Ilias
- *  14 January 2011
- *  Version 1.3
+ *  Version 1.3, 14 January 2011
+ *  Version 1.5, 24 February 2011
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,11 +22,10 @@
  * THE SOFTWARE.
  *
  *
+ * #############################################################################
  *
- * A Fibonacci Heap library that can be used as
- * minimum or as maximum heap. I have written
- * all functionalities of a priority queue
- * data structure.
+ * A Fibonacci Heap library.
+ * I have written all functionalities of a priority queue data structure.
  *
  * Based havily on CLRS implementation
  */
@@ -34,23 +33,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
-#include <limits.h>
 #include "fibheap.h"
 
-/*
- * If (type>0) then is a max fib heap
- * else is a min fib heap
- */
-#define FIB_HEAP_COMPARE(O,N,T) ({ \
-		typeof (O) _o = (O); \
-		typeof (N) _n = (N); \
-		typeof (T) _t = (T); \
-		((_t)&&(_n)>(_o)) ? 1 : ( \
-		((!(_t))&&(_n)<(_o)) ? 1 : 0 ); })
 
 /* intel assembly */
 #define LOG2(X) ({ \
-		int _i = 0; \
+		unsigned int _i = 0; \
 		__asm__("bsr %1, %0" : "=r" (_i) : "r" ((X))); \
 		_i; })
 
@@ -67,7 +55,6 @@
 			exit(1); \
 		}; })
 
-
 static void
 dblink_list_concat(struct fib_heap_node *a, struct fib_heap_node *b)
 {
@@ -83,7 +70,8 @@ dblink_list_concat(struct fib_heap_node *a, struct fib_heap_node *b)
 }
 
 struct fib_heap *
-fibheap_init(int max, int t)
+fibheap_init(unsigned int max,
+	int (*compr)(struct fib_heap_data *, struct fib_heap_data *))
 {
 	struct fib_heap *H = (struct fib_heap *)malloc(sizeof(struct fib_heap));
 	CHECK_MALLOC(H);
@@ -93,9 +81,10 @@ fibheap_init(int max, int t)
 	H->cons_array = (struct fib_heap_node **)
 		malloc((LOG2(max)+2) *	sizeof(struct fib_heap_node *));
 	CHECK_MALLOC(H->cons_array);
-	H->type = (t > 0) ? 1 : 0;
-	H->total_nodes = 0;
+	H->total_nodes = 0U;
 	H->max_nodes = max;
+
+	H->compr = compr;
 
 	return H;
 }
@@ -111,7 +100,7 @@ fibheap_insert(struct fib_heap *H, struct fib_heap_data *d)
 			"fibheap_insert: Fibonacci Heap Overflow");
 
 	node->data = d;
-	node->degree = 0;
+	node->degree = 0U;
 	node->marked = 0;
 	node->parent = NULL;
 	node->child = NULL;
@@ -125,8 +114,7 @@ fibheap_insert(struct fib_heap *H, struct fib_heap_data *d)
 		node->right = H->the_one;
 		H->the_one->left->right = node;
 		H->the_one->left = node;
-		if(FIB_HEAP_COMPARE(H->the_one->data->key,
-					node->data->key, H->type))
+		if(H->compr(H->the_one->data, node->data) > 0)
 			H->the_one = node;
 	}
 	H->total_nodes++;
@@ -148,8 +136,8 @@ fibheap_union(struct fib_heap *a, struct fib_heap *b)
 	CHECK_INPUT(a != NULL, "fibheap_union: a==NULL");
 	CHECK_INPUT(b != NULL, "fibheap_union: b==NULL");
 	CHECK_INPUT(a != b, "fibheap_union: a==b");
-	CHECK_INPUT(a->type == b->type,
-			"fibheap_union: a is of different type from b");
+	CHECK_INPUT(a->compr == b->compr,
+		"fibheap_union: a and b have different compare functions");
 
 	if(b->max_nodes > a->max_nodes) {
 		temp = a;
@@ -167,8 +155,7 @@ fibheap_union(struct fib_heap *a, struct fib_heap *b)
 		free(b);
 	} else {
 		dblink_list_concat(a->the_one, b->the_one);
-		if(FIB_HEAP_COMPARE(a->the_one->data->key,
-					b->the_one->data->key, a->type))
+		if((a->compr)(a->the_one->data, b->the_one->data) > 0)
 			a->the_one = b->the_one;
 		a->total_nodes += b->total_nodes;
 		free(b->cons_array);
@@ -205,18 +192,18 @@ fibheap_link(struct fib_heap_node *y, struct fib_heap_node *x)
 static void
 fibheap_consolidate(struct fib_heap *H)
 {
-	int D;
-	int i, d;
+	unsigned int D;
+	unsigned int i, d;
 	struct fib_heap_node *x, *w, *y, *temp, *new_one;
 
-	if(H->total_nodes == 0) {
+	if(H->total_nodes == 0U) {
 		free(H->the_one);
 		H->the_one = NULL;
 		return;
 	}
 
 	D = LOG2(H->total_nodes);
-	for(i=0;i<=D;i++)
+	for(i=0U;i<=D;i++)
 		H->cons_array[i] = NULL;
 
 	w = H->the_one->right;
@@ -226,8 +213,7 @@ fibheap_consolidate(struct fib_heap *H)
 		d = x->degree;
 		while((d<=D) && (H->cons_array[d]!=NULL)) {
 			y = H->cons_array[d];
-			if(FIB_HEAP_COMPARE(x->data->key,
-						y->data->key, H->type)) {
+			if((H->compr)(x->data, y->data) > 0) {
 				temp = x;
 				x = y;
 				y = temp;
@@ -239,7 +225,7 @@ fibheap_consolidate(struct fib_heap *H)
 			d++;
 		}
 		H->cons_array[d] = x;
-		if(!FIB_HEAP_COMPARE(x->data->key, new_one->data->key, H->type))
+		if((H->compr)(x->data, new_one->data) <= 0)
 			new_one = x;
 		w = w->right;
 	}
@@ -254,7 +240,7 @@ struct fib_heap_data *
 fibheap_extract(struct fib_heap *H)
 {
 	struct fib_heap_data *ret;
-	int i;
+	unsigned int i;
 	CHECK_INPUT(H != NULL, "fibheap_extract: H==NULL");
 
 	if(H->the_one == NULL)
@@ -262,7 +248,7 @@ fibheap_extract(struct fib_heap *H)
 
 	ret = H->the_one->data;
 
-	for(i=0;i<H->the_one->degree;i++) {
+	for(i=0U;i<H->the_one->degree;i++) {
 		H->the_one->child->parent = NULL;
 		H->the_one->child = H->the_one->child->right;
 	}
@@ -278,14 +264,14 @@ fibheap_extract(struct fib_heap *H)
 static void
 fibheap_cut(struct fib_heap *H,	struct fib_heap_node *x,struct fib_heap_node *y)
 {
-	if(y->degree == 1) {
+	(y->degree)--;
+	if(y->degree == 0U) {
 		y->child = NULL;
 	} else {
 		y->child = x->right;
 		x->left->right = x->right;
 		x->right->left = x->left;
 	}
-	(y->degree)--;
 
 	x->right = x;
 	x->left = x;
@@ -318,37 +304,73 @@ fibheap_casc_cut(struct fib_heap *H, struct fib_heap_node *y)
 }
 
 void
-fibheap_change(struct fib_heap *H, struct fib_heap_node *node, int new_key)
+fibheap_increase(struct fib_heap *H, struct fib_heap_node *node)
 {
 	struct fib_heap_node *y;
-	CHECK_INPUT(H != NULL, "fibheap_change: H==NULL");
-	CHECK_INPUT(node != NULL, "fibheap_change: node==NULL");
-	CHECK_INPUT(FIB_HEAP_COMPARE(node->data->key, new_key, H->type),
-			"fibheap_change: not a valid change of key");
+	CHECK_INPUT(H != NULL, "fibheap_increase: H==NULL");
+	CHECK_INPUT(node != NULL, "fibheap_increase: node==NULL");
 
-	node->data->key = new_key;
 	y = node->parent;
-	if(y!=NULL&&FIB_HEAP_COMPARE(y->data->key, node->data->key, H->type)) {
+	if(y!=NULL && ((H->compr)(y->data, node->data) > 0)) {
 		fibheap_cut(H, node, y);
 		fibheap_casc_cut(H, y);
 	}
-	if(FIB_HEAP_COMPARE(H->the_one->data->key, node->data->key, H->type))
+	if((H->compr)(H->the_one->data, node->data) > 0)
 		H->the_one = node;
+}
+
+void
+fibheap_decrease(struct fib_heap *H, struct fib_heap_node *node)
+{
+	unsigned int i;
+	struct fib_heap_node *y;
+	CHECK_INPUT(H != NULL, "fibheap_decrease: H==NULL");
+	CHECK_INPUT(node != NULL, "fibheap_decrease: node==NULL");
+
+	/* concat node's childs with the root list */
+	for(i=0U;i<node->degree;i++) {
+		node->child->parent = NULL;
+		node->child = node->child->right;
+	}
+	if(node->child != NULL)
+		dblink_list_concat(H->the_one, node->child);
+	node->child = NULL;
+	node->degree = 0U;
+
+	/* cut the node */
+	y = node->parent;
+	if(y != NULL) {
+		fibheap_cut(H, node, y);
+		fibheap_casc_cut(H, y);
+	} else if(H->the_one == node) {	/* find then new the_one */
+		y = node->right;
+		while(y != node) {
+			if((H->compr)(node->data, y->data) > 0)
+				H->the_one = y;
+			y = y->right;
+		}
+	}
 }
 
 void
 fibheap_delete(struct fib_heap *H, struct fib_heap_node *node)
 {
+	struct fib_heap_node *y;
+	struct fib_heap_data *d;
 	CHECK_INPUT(H != NULL, "fibheap_delete: H==NULL");
 	CHECK_INPUT(node != NULL, "fibheap_delete: node==NULL");
 
-	if(H->type)
-		fibheap_change(H, node, INT_MAX);
-	else
-		fibheap_change(H, node, INT_MIN);
+	/* increase priority / cut the node */
+	y = node->parent;
+	if(y != NULL) {
+		fibheap_cut(H, node, y);
+		fibheap_casc_cut(H, y);
+	}
 
-	free(node->data);
-	fibheap_extract(H);
+	/* set this node as the highest priority node and extract it */
+	H->the_one = node;
+	d = fibheap_extract(H);
+	free(d);
 }
 
 static void
